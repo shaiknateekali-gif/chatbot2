@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Neon Pong Battle</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a12;
+    color: #fff;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    overflow: hidden;
+    touch-action: none;
+  }
+  h1 {
+    font-size: 2.2rem;
+    background: linear-gradient(90deg, #00f5ff, #ff00aa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 8px;
+  }
+  #menu { text-align: center; max-width: 420px; }
+  .btn {
+    background: linear-gradient(135deg, #00f5ff, #0088ff);
+    border: none;
+    color: #000;
+    font-weight: bold;
+    padding: 14px 28px;
+    margin: 8px;
+    border-radius: 12px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: 0.15s;
+    min-width: 220px;
+  }
+  .btn:hover { transform: scale(1.05); box-shadow: 0 0 20px #00f5ff; }
+  .btn.pink {
+    background: linear-gradient(135deg, #ff00aa, #ff5500);
+  }
+  input {
+    background: #1a1a2e;
+    border: 2px solid #00f5ff;
+    color: #fff;
+    padding: 12px 16px;
+    border-radius: 10px;
+    font-size: 1.1rem;
+    width: 260px;
+    text-align: center;
+    margin: 8px auto;
+    display: block;
+  }
+  #status {
+    margin: 16px 0;
+    font-size: 1rem;
+    color: #aaa;
+    min-height: 50px;
+    line-height: 1.4;
+  }
+  #score {
+    font-size: 1.8rem;
+    margin: 10px 0;
+    font-weight: bold;
+    letter-spacing: 4px;
+  }
+  canvas {
+    background: #0d0d1a;
+    border: 3px solid #00f5ff;
+    border-radius: 8px;
+    box-shadow: 0 0 30px rgba(0,245,255,0.3);
+    max-width: 95vw;
+    max-height: 65vh;
+  }
+  #mobile-controls {
+    display: none;
+    margin-top: 15px;
+    gap: 30px;
+  }
+  .mobile-btn {
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    background: rgba(0,245,255,0.2);
+    border: 2px solid #00f5ff;
+    color: #00f5ff;
+    font-size: 1.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+  }
+  @media (max-width: 600px) {
+    #mobile-controls { display: flex; justify-content: center; }
+    h1 { font-size: 1.6rem; }
+  }
+  .hidden { display: none !important; }
+  #online-section {
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid #333;
+  }
+</style>
+</head>
+<body>
+
+<div id="menu">
+  <h1>NEON PONG BATTLE</h1>
+  <p style="color:#888; margin-bottom:20px;">Local & Online Multiplayer</p>
+  
+  <button class="btn" onclick="startLocal()">Local Multiplayer</button>
+  
+  <div id="online-section">
+    <button class="btn pink" onclick="createRoom()">Create Room (Host)</button>
+    <p style="color:#666; margin:10px 0 5px;">or join a friend</p>
+    <input id="room-code" placeholder="Paste Room Code here" maxlength="40">
+    <button class="btn pink" onclick="joinRoom()">Join Room</button>
+  </div>
+  
+  <div id="status"></div>
+</div>
+
+<div id="game-container" class="hidden">
+  <div id="score">0 : 0</div>
+  <canvas id="gameCanvas" width="800" height="450"></canvas>
+  <div id="status-game" style="margin-top:10px; color:#aaa;"></div>
+  
+  <div id="mobile-controls">
+    <div class="mobile-btn" id="p1-up">▲</div>
+    <div class="mobile-btn" id="p1-down">▼</div>
+    <div style="width:40px;"></div>
+    <div class="mobile-btn" id="p2-up">▲</div>
+    <div class="mobile-btn" id="p2-down">▼</div>
+  </div>
+  
+  <br>
+  <button class="btn pink" onclick="backToMenu()" style="margin-top:15px;">Back to Menu</button>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const statusEl = document.getElementById('status');
+const statusGameEl = document.getElementById('status-game');
+
+let mode = 'local';
+let peer = null;
+let conn = null;
+
+const PADDLE_W = 12;
+const PADDLE_H = 90;
+const BALL = 12;
+const PADDLE_SPEED = 7;
+const BALL_SPEED = 6;
+
+let left = { y: 180, score: 0 };
+let right = { y: 180, score: 0 };
+let ball = { x: 400, y: 225, dx: BALL_SPEED, dy: BALL_SPEED * 0.6 };
+
+let keys = {};
+let running = false;
+let anim = null;
+
+// Keyboard
+window.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (['w','s','arrowup','arrowdown'].includes(e.key.toLowerCase())) e.preventDefault();
+});
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+// Mobile
+['p1-up','p1-down','p2-up','p2-down'].forEach(id => {
+  const el = document.getElementById(id);
+  const press = () => keys[id] = true;
+  const release = () => keys[id] = false;
+  el.addEventListener('touchstart', e => { e.preventDefault(); press(); });
+  el.addEventListener('touchend', e => { e.preventDefault(); release(); });
+  el.addEventListener('mousedown', press);
+  el.addEventListener('mouseup', release);
+  el.addEventListener('mouseleave', release);
+});
+
+function startLocal() {
+  mode = 'local';
+  showGame();
+  statusGameEl.textContent = 'Local • W/S  vs  ↑/↓';
+  reset();
+  running = true;
+  loop();
+}
+
+function createRoom() {
+  statusEl.innerHTML = 'Creating room... please wait';
+  if (peer) peer.destroy();
+  
+  peer = new Peer();
+  
+  peer.on('open', id => {
+    statusEl.innerHTML = `
+      <strong style="color:#00f5ff;font-size:1.3rem">Room Ready!</strong><br>
+      Copy this code and send to your friend:<br>
+      <div style="background:#1a1a2e;padding:10px;border-radius:8px;margin:10px 0;word-break:break-all;font-size:1.1rem;color:#0ff">${id}</div>
+      Waiting for friend to join...
+    `;
+  });
+  
+  peer.on('connection', c => {
+    conn = c;
+    mode = 'host';
+    setupConn();
+    showGame();
+    statusGameEl.textContent = 'You are HOST (Left paddle • cyan)';
+    reset();
+    running = true;
+    loop();
+  });
+  
+  peer.on('error', err => {
+    statusEl.innerHTML = `<span style="color:#ff5555">Error: ${err.type}</span><br>Try again or refresh the page.`;
+  });
+}
+
+function joinRoom() {
+  const code = document.getElementById('room-code').value.trim();
+  if (!code) {
+    statusEl.innerHTML = '<span style="color:#ff5555">Please paste the room code first</span>';
+    return;
+  }
+  
+  statusEl.innerHTML = 'Connecting to friend...';
+  if (peer) peer.destroy();
+  
+  peer = new Peer();
+  
+  peer.on('open', () => {
+    conn = peer.connect(code);
+    
+    conn.on('open', () => {
+      mode = 'guest';
+      setupConn();
+      showGame();
+      statusGameEl.textContent = 'You are GUEST (Right paddle • pink)';
+      reset();
+      running = true;
+      loop();
+    });
+    
+    conn.on('error', () => {
+      statusEl.innerHTML = '<span style="color:#ff5555">Could not connect. Check the code and try again.</span>';
+    });
+  });
+  
+  peer.on('error', err => {
+    statusEl.innerHTML = `<span style="color:#ff5555">Error: ${err.type}</span>`;
+  });
+}
+
+function setupConn() {
+  conn.on('data', data => {
+    if (data.type === 'state' && mode === 'guest') {
+      left.y = data.ly;
+      right.y = data.ry;
+      ball.x = data.bx;
+      ball.y = data.by;
+      ball.dx = data.bdx;
+      ball.dy = data.bdy;
+      left.score = data.ls;
+      right.score = data.rs;
+      updateScore();
+    }
+    if (data.type === 'input' && mode === 'host') {
+      keys['g-up'] = data.up;
+      keys['g-down'] = data.down;
+    }
+  });
+  
+  conn.on('close', () => {
+    statusGameEl.textContent = 'Friend disconnected';
+    running = false;
+  });
+}
+
+function showGame() {
+  document.getElementById('menu').classList.add('hidden');
+  document.getElementById('game-container').classList.remove('hidden');
+}
+
+function backToMenu() {
+  running = false;
+  if (anim) cancelAnimationFrame(anim);
+  if (peer) { peer.destroy(); peer = null; }
+  conn = null;
+  document.getElementById('game-container').classList.add('hidden');
+  document.getElementById('menu').classList.remove('hidden');
+  statusEl.innerHTML = '';
+  document.getElementById('room-code').value = '';
+}
+
+function reset() {
+  left = { y: 180, score: 0 };
+  right = { y: 180, score: 0 };
+  ball = { x: 400, y: 225, dx: BALL_SPEED * (Math.random()>0.5?1:-1), dy: BALL_SPEED*0.6 };
+  updateScore();
+}
+
+function updateScore() {
+  scoreEl.textContent = `${left.score} : ${right.score}`;
+}
+
+function update() {
+  if (!running) return;
+
+  // Left paddle (Host or Local)
+  if (mode === 'local' || mode === 'host') {
+    if (keys['w'] || keys['p1-up']) left.y -= PADDLE_SPEED;
+    if (keys['s'] || keys['p1-down']) left.y += PADDLE_SPEED;
+  }
+
+  // Right paddle
+  if (mode === 'local') {
+    if (keys['arrowup'] || keys['p2-up']) right.y -= PADDLE_SPEED;
+    if (keys['arrowdown'] || keys['p2-down']) right.y += PADDLE_SPEED;
+  }
+  if (mode === 'host') {
+    if (keys['g-up']) right.y -= PADDLE_SPEED;
+    if (keys['g-down']) right.y += PADDLE_SPEED;
+  }
+
+  // Guest sends input
+  if (mode === 'guest' && conn && conn.open) {
+    conn.send({
+      type: 'input',
+      up: !!(keys['arrowup'] || keys['w'] || keys['p2-up'] || keys['p1-up']),
+      down: !!(keys['arrowdown'] || keys['s'] || keys['p2-down'] || keys['p1-down'])
+    });
+  }
+
+  left.y = Math.max(0, Math.min(canvas.height - PADDLE_H, left.y));
+  right.y = Math.max(0, Math.min(canvas.height - PADDLE_H, right.y));
+
+  // Physics only on host / local
+  if (mode === 'local' || mode === 'host') {
+    ball.x += ball.dx;
+    ball.y += ball.dy;
+
+    if (ball.y <= 0 || ball.y + BALL >= canvas.height) ball.dy *= -1;
+
+    // Left paddle hit
+    if (ball.x <= 20 + PADDLE_W && ball.y + BALL > left.y && ball.y < left.y + PADDLE_H) {
+      ball.dx = Math.abs(ball.dx) * 1.05;
+      ball.dy = ((ball.y - left.y) / PADDLE_H - 0.5) * 10;
+    }
+    // Right paddle hit
+    if (ball.x + BALL >= canvas.width - 20 - PADDLE_W && ball.y + BALL > right.y && ball.y < right.y + PADDLE_H) {
+      ball.dx = -Math.abs(ball.dx) * 1.05;
+      ball.dy = ((ball.y - right.y) / PADDLE_H - 0.5) * 10;
+    }
+
+    if (ball.x < 0) {
+      right.score++;
+      updateScore();
+      ball.x = 400; ball.y = 225;
+      ball.dx = BALL_SPEED; ball.dy = BALL_SPEED * (Math.random()*1.2-0.6);
+    }
+    if (ball.x > canvas.width) {
+      left.score++;
+      updateScore();
+      ball.x = 400; ball.y = 225;
+      ball.dx = -BALL_SPEED; ball.dy = BALL_SPEED * (Math.random()*1.2-0.6);
+    }
+
+    // Send state to guest
+    if (mode === 'host' && conn && conn.open) {
+      conn.send({
+        type: 'state',
+        ly: left.y, ry: right.y,
+        bx: ball.x, by: ball.y,
+        bdx: ball.dx, bdy: ball.dy,
+        ls: left.score, rs: right.score
+      });
+    }
+  }
+}
+
+function draw() {
+  ctx.fillStyle = '#0d0d1a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = 'rgba(0,245,255,0.15)';
+  ctx.setLineDash([12, 12]);
+  ctx.beginPath();
+  ctx.moveTo(canvas.width/2, 0);
+  ctx.lineTo(canvas.width/2, canvas.height);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Left paddle
+  ctx.fillStyle = '#00f5ff';
+  ctx.shadowColor = '#00f5ff';
+  ctx.shadowBlur = 18;
+  ctx.fillRect(20, left.y, PADDLE_W, PADDLE_H);
+
+  // Right paddle
+  ctx.fillStyle = '#ff00aa';
+  ctx.shadowColor = '#ff00aa';
+  ctx.fillRect(canvas.width - 20 - PADDLE_W, right.y, PADDLE_W, PADDLE_H);
+
+  // Ball
+  ctx.fillStyle = '#fff';
+  ctx.shadowColor = '#fff';
+  ctx.shadowBlur = 20;
+  ctx.beginPath();
+  ctx.arc(ball.x + BALL/2, ball.y + BALL/2, BALL/2, 0, Math.PI*2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function loop() {
+  update();
+  draw();
+  if (running) anim = requestAnimationFrame(loop);
+}
+
+// Responsive canvas
+function resize() {
+  const maxW = Math.min(800, window.innerWidth - 20);
+  canvas.style.width = maxW + 'px';
+  canvas.style.height = (maxW * 450/800) + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+</script>
+</body>
+</html>
